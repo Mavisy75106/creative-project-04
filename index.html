@@ -1,0 +1,1132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shadowbroker OSINT Command Center</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg-primary: oklch(0.06 0.015 260);
+  --bg-panel: oklch(0.10 0.02 260);
+  --bg-panel-border: oklch(0.18 0.03 260);
+  --cyan: oklch(0.72 0.14 185);
+  --cyan-dim: oklch(0.50 0.10 185);
+  --teal: oklch(0.65 0.12 170);
+  --amber: oklch(0.75 0.16 85);
+  --red: oklch(0.60 0.20 15);
+  --green: oklch(0.70 0.18 145);
+  --text-primary: oklch(0.90 0.01 260);
+  --text-secondary: oklch(0.55 0.02 260);
+  --text-dim: oklch(0.35 0.02 260);
+  --scan-line: oklch(0.72 0.14 185 / 0.06);
+}
+
+html, body {
+  width: 100%; height: 100%;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Space Grotesk', sans-serif;
+  overflow: hidden;
+  user-select: none;
+}
+
+#app {
+  position: relative;
+  width: 100vw; height: 100vh;
+  overflow: hidden;
+}
+
+canvas#globe-canvas {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  cursor: grab;
+  z-index: 1;
+}
+canvas#globe-canvas:active { cursor: grabbing; }
+
+/* CRT Scan-line overlay */
+#scanlines {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    var(--scan-line) 2px,
+    var(--scan-line) 4px
+  );
+  pointer-events: none;
+  z-index: 10;
+  opacity: 0.4;
+}
+
+/* Header bar */
+#header {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 48px;
+  background: linear-gradient(180deg, oklch(0.12 0.02 260) 0%, oklch(0.08 0.015 260) 100%);
+  border-bottom: 1px solid var(--bg-panel-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  z-index: 20;
+}
+
+#header h1 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--cyan);
+}
+
+#header .status-bar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+#header .status-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  display: inline-block;
+  margin-right: 6px;
+  animation: pulse-dot 2s infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Side panel */
+#side-panel {
+  position: absolute;
+  right: 0; top: 48px; bottom: 0;
+  width: 340px;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--bg-panel-border);
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panel-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--bg-panel-border);
+}
+
+.panel-tab {
+  flex: 1;
+  padding: 10px 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--bg-panel-border);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.panel-tab:hover { color: var(--text-primary); }
+.panel-tab.active {
+  color: var(--cyan);
+  background: oklch(0.14 0.02 260 / 0.5);
+  border-bottom: 2px solid var(--cyan);
+}
+
+.panel-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg-panel-border) transparent;
+}
+
+.panel-content::-webkit-scrollbar { width: 4px; }
+.panel-content::-webkit-scrollbar-track { background: transparent; }
+.panel-content::-webkit-scrollbar-thumb { background: var(--bg-panel-border); }
+
+/* Data feed */
+.feed-item {
+  padding: 10px 14px;
+  border-bottom: 1px solid oklch(0.10 0.02 260 / 0.5);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  animation: feed-fade-in 0.5s ease-out;
+}
+
+@keyframes feed-fade-in {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.feed-item .feed-time {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.feed-item .feed-tag {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 2px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0 4px;
+}
+
+.feed-tag.jets { background: oklch(0.25 0.05 40); color: var(--amber); }
+.feed-tag.sat { background: oklch(0.20 0.05 200); color: oklch(0.70 0.12 240); }
+.feed-tag.seismic { background: oklch(0.20 0.08 15); color: var(--red); }
+.feed-tag.agent { background: oklch(0.20 0.08 180); color: var(--cyan); }
+
+.feed-item .feed-text { color: var(--text-primary); margin-top: 2px; }
+.feed-item .feed-coords { color: var(--cyan-dim); font-size: 10px; }
+
+/* Agent cards */
+.agent-card {
+  padding: 12px 14px;
+  border-bottom: 1px solid oklch(0.10 0.02 260 / 0.5);
+}
+
+.agent-card .agent-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.agent-card .agent-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--cyan);
+}
+
+.agent-card .agent-status {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.agent-card .agent-status.active { background: var(--green); }
+.agent-card .agent-status.scanning { background: var(--amber); animation: pulse-dot 1s infinite; }
+.agent-card .agent-status.offline { background: var(--text-dim); }
+
+.agent-card .agent-role {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.agent-card .agent-stats {
+  display: flex;
+  gap: 12px;
+  font-size: 10px;
+  color: var(--text-dim);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.agent-card .agent-stats span { color: var(--text-secondary); }
+
+/* Controls */
+#controls {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  z-index: 20;
+  display: flex;
+  gap: 8px;
+}
+
+.ctrl-btn {
+  padding: 8px 14px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-secondary);
+  background: var(--bg-panel);
+  border: 1px solid var(--bg-panel-border);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ctrl-btn:hover {
+  color: var(--cyan);
+  border-color: var(--cyan-dim);
+}
+
+.ctrl-btn.active {
+  color: var(--cyan);
+  border-color: var(--cyan);
+  background: oklch(0.15 0.05 185 / 0.3);
+}
+
+/* Info panel */
+#info-panel {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: center;
+  pointer-events: none;
+}
+
+/* Vignette */
+#vignette {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: radial-gradient(ellipse at center, transparent 50%, var(--bg-primary) 100%);
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* Title screen */
+#title-screen {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--bg-primary);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.8s ease-out;
+}
+
+#title-screen.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#title-screen h2 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 36px;
+  font-weight: 300;
+  letter-spacing: 12px;
+  text-transform: uppercase;
+  color: var(--cyan);
+  margin-bottom: 8px;
+}
+
+#title-screen .subtitle {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  margin-bottom: 40px;
+}
+
+#title-screen .start-btn {
+  padding: 12px 40px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  color: var(--cyan);
+  background: transparent;
+  border: 1px solid var(--cyan-dim);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+#title-screen .start-btn:hover {
+  background: oklch(0.15 0.05 185 / 0.3);
+  border-color: var(--cyan);
+  box-shadow: 0 0 30px oklch(0.72 0.14 185 / 0.15);
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+  #side-panel { width: 280px; }
+  #controls { display: none; }
+}
+
+@media (max-width: 700px) {
+  #side-panel { width: 240px; }
+  #header h1 { font-size: 12px; letter-spacing: 2px; }
+  #header .status-bar { display: none; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="title-screen">
+    <h2>Shadowbroker</h2>
+    <div class="subtitle">OSINT Command Center</div>
+    <button class="start-btn" id="start-btn">Initialize</button>
+  </div>
+
+  <canvas id="globe-canvas"></canvas>
+
+  <div id="scanlines"></div>
+  <div id="vignette"></div>
+
+  <div id="header">
+    <h1>Shadowbroker</h1>
+    <div class="status-bar">
+      <span><span class="status-dot"></span>SYSTEMS ONLINE</span>
+      <span id="clock">00:00:00 UTC</span>
+      <span id="data-count">0 DATA POINTS</span>
+    </div>
+  </div>
+
+  <div id="side-panel">
+    <div class="panel-tabs">
+      <button class="panel-tab active" data-tab="feed">Data Feed</button>
+      <button class="panel-tab" data-tab="agents">Agents</button>
+    </div>
+    <div class="panel-content" id="panel-feed"></div>
+    <div class="panel-content" id="panel-agents" style="display:none;"></div>
+  </div>
+
+  <div id="controls">
+    <button class="ctrl-btn active" data-layer="all" title="Show all layers">All</button>
+    <button class="ctrl-btn" data-layer="jets" title="Show private jets only">Jets</button>
+    <button class="ctrl-btn" data-layer="sats" title="Show satellites only">Sats</button>
+    <button class="ctrl-btn" data-layer="seismic" title="Show seismic events">Seismic</button>
+    <button class="ctrl-btn" data-layer="agents" title="Show agent networks">Agents</button>
+  </div>
+
+  <div id="info-panel">DRAG TO ROTATE GLOBE &bull; SCROLL TO ZOOM &bull; CLICK MAP FOR INFO</div>
+</div>
+
+<script>
+// ============================================================
+// Shadowbroker OSINT Command Center
+// ============================================================
+
+// --- Design Token Colors (oklch) ---
+const C = {
+  bg: '#0a0a12',
+  panel: '#12121e',
+  cyan: '#00d4aa',
+  cyanDim: '#009978',
+  teal: '#00c49e',
+  amber: '#f5a623',
+  red: '#ef4444',
+  green: '#22c55e',
+  textPrimary: '#e0e0e8',
+  textSecondary: '#7a7a8a',
+  textDim: '#404050',
+};
+
+// --- State ---
+const state = {
+  running: false,
+  time: 0,
+  drag: { active: false, x: 0, y: 0, rotX: 0, rotY: 0, targetRotY: 0, targetRotX: 0 },
+  zoom: 1.0,
+  targetZoom: 1.0,
+  activeLayer: 'all',
+  feedItems: [],
+  maxFeedItems: 50,
+  dataPoints: 0,
+};
+
+// --- Agents ---
+const agentDefs = [
+  { id: 'A-01', name: 'WRAITH', role: 'Signal Intel', status: 'active', scans: 847, target: null },
+  { id: 'A-02', name: 'PHANTOM', role: 'IMINT', status: 'scanning', scans: 1203, target: null },
+  { id: 'A-03', name: 'SPECTER', role: 'SIGINT', status: 'active', scans: 562, target: null },
+  { id: 'A-04', name: 'HAUNTER', role: 'OSINT', status: 'scanning', scans: 934, target: null },
+  { id: 'A-05', name: 'GHOST', role: 'ELINT', status: 'active', scans: 412, target: null },
+  { id: 'A-06', name: 'NEXUS', role: 'Multi-INT', status: 'offline', scans: 2156, target: null },
+];
+
+// --- Seismic Events ---
+const seismicDefs = [
+  { lat: 35.6, lon: 139.7, mag: 4.2, time: Date.now() },
+  { lat: -33.4, lon: -70.6, mag: 3.8, time: Date.now() - 60000 },
+  { lat: 64.1, lon: -21.9, mag: 2.9, time: Date.now() - 120000 },
+  { lat: 38.7, lon: 31.2, mag: 5.1, time: Date.now() - 180000 },
+  { lat: -6.2, lon: 106.8, mag: 3.3, time: Date.now() - 240000 },
+  { lat: 40.7, lon: -74.0, mag: 2.1, time: Date.now() - 300000 },
+];
+
+// --- Satellite orbits ---
+const satellites = [];
+const satNames = ['USA-295', 'NOAA-20', 'SENTINEL-2A', 'COSMOS-2574', 'LANDSAT-9', 'TERRA', 'AQUA', 'SUOMI', 'JPSS-1', 'GRACE-FO2', 'ICESAT-2', 'CALIPSO', 'CLOUDSAT', 'AURA', 'GCOM-W1'];
+for (let i = 0; i < satNames.length; i++) {
+  const orbit = {
+    name: satNames[i],
+    inclination: (Math.random() - 0.5) * Math.PI * 0.8,
+    phase: Math.random() * Math.PI * 2,
+    speed: 0.0003 + Math.random() * 0.0005,
+    altitude: 0.85 + Math.random() * 0.3,
+    idx: i,
+  };
+  satellites.push(orbit);
+}
+
+// --- Jet positions (simulated private jets) ---
+const jets = [];
+const jetRoutes = [
+  { from: { lat: 40.7, lon: -74.0 }, to: { lat: 51.5, lon: -0.1 }, progress: Math.random() },
+  { from: { lat: 35.7, lon: 139.7 }, to: { lat: 34.1, lon: -118.2 }, progress: Math.random() },
+  { from: { lat: 25.2, lon: 55.3 }, to: { lat: 24.4, lon: 54.6 }, progress: Math.random() },
+  { from: { lat: 48.9, lon: 2.3 }, to: { lat: 41.0, lon: 28.9 }, progress: Math.random() },
+  { from: { lat: 1.3, lon: 103.8 }, to: { lat: 31.2, lon: 121.4 }, progress: Math.random() },
+  { from: { lat: 33.7, lon: -84.4 }, to: { lat: 55.7, lon: 37.6 }, progress: Math.random() },
+  { from: { lat: -33.9, lon: 18.4 }, to: { lat: -26.2, lon: 28.0 }, progress: Math.random() },
+];
+for (const route of jetRoutes) {
+  jets.push({ route: route, speed: 0.00008 + Math.random() * 0.00012, callsign: 'N-' + Math.random().toString(36).substring(2, 6).toUpperCase() });
+}
+
+// --- Feed data templates ---
+const feedTemplates = [
+  { tag: 'jets', text: 'Private jet {callsign} detected at FL{fl}, enroute to {dest}', loc: () => randomCoords() },
+  { tag: 'sat', text: 'Overpass detected: {name} passing {loc}', loc: () => randomCoords() },
+  { tag: 'seismic', text: 'M{mag} event recorded near {loc}', loc: () => randomCoords() },
+  { tag: 'agent', text: '{agent} completed scan of {loc}', loc: () => randomCoords() },
+];
+
+const jetCallsigns = ['N7XM', 'N4BK', 'N8RT', 'G-SZS', 'OE-DBV', 'HB-JLA', 'VH-XJA', 'RA-031'];
+const jetDestinations = ['LAX', 'SIN', 'DXB', 'CDG', 'ICN', 'DOH', 'SVO', 'GRU'];
+const agentNames = ['WRAITH', 'PHANTOM', 'SPECTER', 'HAUNTER', 'GHOST'];
+
+function randomCoords() {
+  const lat = (Math.random() - 0.5) * 160;
+  const lon = (Math.random() - 0.5) * 360;
+  return `${lat.toFixed(1)}° ${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(1)}° ${lon >= 0 ? 'E' : 'W'}`;
+}
+
+function randomJet() {
+  return { callsign: jetCallsigns[Math.floor(Math.random() * jetCallsigns.length)], dest: jetDestinations[Math.floor(Math.random() * jetDestinations.length)], fl: 300 + Math.floor(Math.random() * 100) };
+}
+
+function randomSat() {
+  return { name: satNames[Math.floor(Math.random() * satNames.length)] };
+}
+
+function addFeedItem() {
+  const template = feedTemplates[Math.floor(Math.random() * feedTemplates.length)];
+  const item = { time: Date.now(), tag: template.tag, text: '', loc: '' };
+
+  if (template.tag === 'jets') {
+    const jet = randomJet();
+    item.text = `Private jet ${jet.callsign} at FL${jet.fl}, enroute to ${jet.dest}`;
+    item.loc = template.loc();
+  } else if (template.tag === 'sat') {
+    const sat = randomSat();
+    item.text = `Overpass: ${sat.name} passing ${template.loc()}`;
+    item.loc = template.loc();
+  } else if (template.tag === 'seismic') {
+    item.text = `M${(2 + Math.random() * 4).toFixed(1)} event near ${template.loc()}`;
+  } else {
+    item.text = `${agentNames[Math.floor(Math.random() * agentNames.length)]} scan complete at ${template.loc()}`;
+  }
+
+  state.feedItems.unshift(item);
+  state.dataPoints += Math.floor(Math.random() * 5) + 1;
+  if (state.feedItems.length > state.maxFeedItems) state.feedItems.pop();
+  renderFeed();
+}
+
+function renderFeed() {
+  const el = document.getElementById('panel-feed');
+  const items = state.feedItems.slice(0, 30);
+  el.innerHTML = items.map(item => {
+    const t = new Date(item.time);
+    const ts = t.toISOString().substr(11, 8);
+    return `<div class="feed-item">
+      <div><span class="feed-time">${ts}</span> <span class="feed-tag ${item.tag}">${item.tag}</span></div>
+      <div class="feed-text">${item.text}</div>
+      <div class="feed-coords">${item.loc}</div>
+    </div>`;
+  }).join('');
+  document.getElementById('data-count').textContent = state.dataPoints.toLocaleString() + ' DATA POINTS';
+}
+
+function renderAgents() {
+  const el = document.getElementById('panel-agents');
+  el.innerHTML = agentDefs.map(a => `
+    <div class="agent-card">
+      <div class="agent-header">
+        <span class="agent-name">${a.name}</span>
+        <span class="agent-status ${a.status}" title="${a.status}"></span>
+      </div>
+      <div class="agent-role">${a.role} // ${a.id}</div>
+      <div class="agent-stats">
+        Scans <span>${a.scans.toLocaleString()}</span>
+        Status <span>${a.status}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+// --- Canvas Setup ---
+const canvas = document.getElementById('globe-canvas');
+const ctx = canvas.getContext('2d');
+let W, H, cx, cy, globeRadius;
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cx = W / 2;
+  cy = H / 2;
+  // Globe centered slightly left to leave room for side panel
+  cx = W - 360;
+  cy = H / 2 + 24;
+  globeRadius = Math.min(W, H) * 0.28;
+  if (W < 900) {
+    cx = W / 2;
+    globeRadius = Math.min(W, H) * 0.32;
+  }
+}
+window.addEventListener('resize', resize);
+resize();
+
+// --- 3D Math ---
+function latLonTo3D(lat, lon, radius) {
+  const phi = lat * Math.PI / 180;
+  const theta = lon * Math.PI / 180;
+  return {
+    x: radius * Math.cos(phi) * Math.sin(theta),
+    y: radius * Math.sin(phi),
+    z: radius * Math.cos(phi) * Math.cos(theta)
+  };
+}
+
+function project3D(x3, y3, z3, rotY, rotX, zoom) {
+  // Rotate around Y axis
+  let x1 = x3 * Math.cos(rotY) - z3 * Math.sin(rotY);
+  let z1 = x3 * Math.sin(rotY) + z3 * Math.cos(rotY);
+  let y1 = y3;
+
+  // Rotate around X axis
+  let y2 = y1 * Math.cos(rotX) - z1 * Math.sin(rotX);
+  let z2 = y1 * Math.sin(rotX) + z1 * Math.cos(rotX);
+  let x2 = x1;
+
+  const perspective = 800;
+  const scale = perspective / (perspective + z2) * zoom;
+  return {
+    x: cx + x2 * scale,
+    y: cy - y2 * scale,
+    z: z2,
+    scale: scale
+  };
+}
+
+// --- Drawing Functions ---
+function drawGridBackground() {
+  // Subtle grid lines
+  ctx.strokeStyle = 'oklch(0.12 0.02 260 / 0.3)';
+  ctx.lineWidth = 0.5;
+  const spacing = 40;
+  for (let x = 0; x < W; x += spacing) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, H);
+    ctx.stroke();
+  }
+  for (let y = 0; y < H; y += spacing) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+}
+
+function drawGlobeBase(rotY, rotX, zoom) {
+  const r = globeRadius * zoom;
+
+  // Globe shadow/glow
+  const glow = ctx.createRadialGradient(cx, cy, r * 0.8, cx, cy, r * 1.5);
+  glow.addColorStop(0, 'oklch(0.72 0.14 185 / 0.04)');
+  glow.addColorStop(1, 'transparent');
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 1.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Globe base circle
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = oklch(0.08 0.02 260 / 0.6);
+  ctx.fill();
+
+  // Globe edge highlight
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.strokeStyle = oklch(0.72 0.14 185 / 0.3);
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Latitude lines
+  for (let lat = -80; lat <= 80; lat += 20) {
+    const p3 = latLonTo3D(lat, 0, r);
+    const p1 = project3D(p3.x, p3.y, p3.z, rotY, rotX, zoom);
+    if (p1.z > -r * 0.5) {
+      ctx.beginPath();
+      ctx.strokeStyle = oklch(0.72 0.14 185 / 0.08);
+      ctx.lineWidth = 0.5;
+      // Draw latitude circle
+      for (let lon = 0; lon <= 360; lon += 5) {
+        const lp = latLonTo3D(lat, lon, r);
+        const proj = project3D(lp.x, lp.y, lp.z, rotY, rotX, zoom);
+        if (proj.z > -r * 0.3) {
+          if (lon === 0) ctx.moveTo(proj.x, proj.y);
+          else ctx.lineTo(proj.x, proj.y);
+        } else {
+          ctx.stroke();
+          ctx.beginPath();
+        }
+      }
+      ctx.stroke();
+    }
+  }
+
+  // Longitude lines
+  for (let lon = 0; lon < 360; lon += 30) {
+    ctx.beginPath();
+    ctx.strokeStyle = oklch(0.72 0.14 185 / 0.06);
+    ctx.lineWidth = 0.5;
+    for (let lat = -90; lat <= 90; lat += 3) {
+      const lp = latLonTo3D(lat, lon, r);
+      const proj = project3D(lp.x, lp.y, lp.z, rotY, rotX, zoom);
+      if (proj.z > -r * 0.3) {
+        if (lat === -90) ctx.moveTo(proj.x, proj.y);
+        else ctx.lineTo(proj.x, proj.y);
+      } else {
+        ctx.stroke();
+        ctx.beginPath();
+      }
+    }
+    ctx.stroke();
+  }
+}
+
+function drawSeismicEvents(rotY, rotX, zoom) {
+  if (state.activeLayer !== 'all' && state.activeLayer !== 'seismic') return;
+  const r = globeRadius * zoom;
+
+  for (const evt of seismicDefs) {
+    const age = (Date.now() - evt.time) / 1000;
+    if (age > 15) continue;
+
+    const p3 = latLonTo3D(evt.lat, evt.lon, r);
+    const proj = project3D(p3.x, p3.y, p3.z, rotY, rotX, zoom);
+    if (proj.z < -r * 0.2) continue;
+
+    // Pulse rings
+    const pulseRadius = age * 30;
+    const pulseAlpha = Math.max(0, 0.4 * (1 - age / 15));
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, pulseRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = oklch(0.60 0.20 15 / ${pulseAlpha.toFixed(2)});
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Second ring
+    const pulseRadius2 = age * 20;
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, pulseRadius2, 0, Math.PI * 2);
+    ctx.strokeStyle = oklch(0.60 0.20 15 / ${(pulseAlpha * 0.5).toFixed(2)});
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Center dot
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, 3 * zoom, 0, Math.PI * 2);
+    ctx.fillStyle = oklch(0.60 0.20 15 / 0.8);
+    ctx.fill();
+
+    // Magnitude label
+    ctx.font = '9px JetBrains Mono';
+    ctx.fillStyle = oklch(0.70 0.10 15 / 0.7);
+    ctx.textAlign = 'center';
+    ctx.fillText(`M${evt.mag.toFixed(1)}`, proj.x, proj.y - 12 * zoom);
+  }
+}
+
+function drawSatellites(rotY, rotX, zoom) {
+  if (state.activeLayer !== 'all' && state.activeLayer !== 'sats') return;
+  const r = globeRadius * zoom;
+
+  for (const sat of satellites) {
+    const angle = sat.phase + state.time * sat.speed;
+    const orbitR = r * sat.altitude;
+
+    // Calculate position along orbit
+    const lat = Math.asin(Math.sin(sat.inclination) * Math.sin(angle)) * 180 / Math.PI;
+    const lon = ((Math.atan2(Math.sin(angle) * Math.cos(sat.inclination), Math.cos(angle)) * 180 / Math.PI) + 180) % 360 - 180;
+
+    const p3 = latLonTo3D(lat, lon, orbitR);
+    const proj = project3D(p3.x, p3.y, p3.z, rotY, rotX, zoom);
+
+    if (proj.z < -r * 0.2) continue;
+
+    // Trail
+    ctx.beginPath();
+    ctx.strokeStyle = oklch(0.70 0.12 240 / 0.15);
+    ctx.lineWidth = 1;
+    const trailLen = 15;
+    for (let i = 0; i < trailLen; i++) {
+      const trailAngle = angle - i * 0.02;
+      const tLat = Math.asin(Math.sin(sat.inclination) * Math.sin(trailAngle)) * 180 / Math.PI;
+      const tLon = ((Math.atan2(Math.sin(trailAngle) * Math.cos(sat.inclination), Math.cos(trailAngle)) * 180 / Math.PI) + 180) % 360 - 180;
+      const tp3 = latLonTo3D(tLat, tLon, orbitR);
+      const tproj = project3D(tp3.x, tp3.y, tp3.z, rotY, rotX, zoom);
+      if (i === 0) ctx.moveTo(tproj.x, tproj.y);
+      else ctx.lineTo(tproj.x, tproj.y);
+    }
+    ctx.stroke();
+
+    // Satellite dot
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, 2.5 * zoom, 0, Math.PI * 2);
+    ctx.fillStyle = oklch(0.70 0.12 240 / 0.9);
+    ctx.fill();
+
+    // Glow
+    const glow = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, 8 * zoom);
+    glow.addColorStop(0, oklch(0.70 0.12 240 / 0.3));
+    glow.addColorStop(1, 'transparent');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, 8 * zoom, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Label
+    if (zoom > 0.8) {
+      ctx.font = '8px JetBrains Mono';
+      ctx.fillStyle = oklch(0.70 0.12 240 / 0.5);
+      ctx.textAlign = 'center';
+      ctx.fillText(sat.name, proj.x, proj.y - 10 * zoom);
+    }
+  }
+}
+
+function drawJets(rotY, rotX, zoom) {
+  if (state.activeLayer !== 'all' && state.activeLayer !== 'jets') return;
+  const r = globeRadius * zoom;
+
+  for (const jet of jets) {
+    const from = jet.route.from;
+    const to = jet.route.to;
+    const progress = jet.route.progress;
+    const lat = from.lat + (to.lat - from.lat) * progress;
+    const lon = from.lon + (to.lon - from.lon) * progress;
+
+    const p3 = latLonTo3D(lat, lon, r);
+    const proj = project3D(p3.x, p3.y, p3.z, rotY, rotX, zoom);
+    if (proj.z < -r * 0.2) continue;
+
+    // Jet trail (curved path)
+    ctx.beginPath();
+    ctx.strokeStyle = oklch(0.75 0.16 85 / 0.1);
+    ctx.lineWidth = 1;
+    const steps = 30;
+    for (let i = 0; i <= steps; i++) {
+      const t = Math.max(0, progress - i * 0.015);
+      const tl = from.lat + (to.lat - from.lat) * t;
+      const tl2 = from.lon + (to.lon - from.lon) * t;
+      const tp3 = latLonTo3D(tl, tl2, r);
+      const tproj = project3D(tp3.x, tp3.y, tp3.z, rotY, rotX, zoom);
+      if (tproj.z > -r * 0.3) {
+        if (i === 0) ctx.moveTo(tproj.x, tproj.y);
+        else ctx.lineTo(tproj.x, tproj.y);
+      }
+    }
+    ctx.stroke();
+
+    // Jet dot
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, 3 * zoom, 0, Math.PI * 2);
+    ctx.fillStyle = oklch(0.75 0.16 85 / 0.9);
+    ctx.fill();
+
+    // Glow
+    const glow = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, 10 * zoom);
+    glow.addColorStop(0, oklch(0.75 0.16 85 / 0.25));
+    glow.addColorStop(1, 'transparent');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, 10 * zoom, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Callsign
+    ctx.font = '9px JetBrains Mono';
+    ctx.fillStyle = oklch(0.75 0.16 85 / 0.6);
+    ctx.textAlign = 'center';
+    ctx.fillText(jet.callsign, proj.x, proj.y - 10 * zoom);
+  }
+}
+
+function drawAgentNetwork(rotY, rotX, zoom) {
+  if (state.activeLayer !== 'all' && state.activeLayer !== 'agents') return;
+  const r = globeRadius * zoom;
+
+  // Draw agent scan lines from agents to random points on globe
+  const agents = agentDefs.filter(a => a.status === 'active' || a.status === 'scanning');
+  const time = state.time;
+
+  for (let i = 0; i < agents.length; i++) {
+    const agent = agents[i];
+    const agentAngle = (i / agents.length) * Math.PI * 2 + time * 0.0001;
+    const agentLat = Math.sin(agentAngle) * 60;
+    const agentLon = (agentAngle * 180 / Math.PI) % 360 - 180;
+
+    const p3 = latLonTo3D(agentLat, agentLon, r * 1.15);
+    const proj = project3D(p3.x, p3.y, p3.z, rotY, rotX, zoom);
+
+    if (proj.z < -r * 0.3) continue;
+
+    // Agent node
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, 4 * zoom, 0, Math.PI * 2);
+    ctx.fillStyle = agent.status === 'scanning' ? oklch(0.75 0.16 85) : oklch(0.72 0.14 185);
+    ctx.fill();
+
+    // Agent glow
+    const glow = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, 15 * zoom);
+    const glowColor = agent.status === 'scanning' ? oklch(0.75 0.16 85) : oklch(0.72 0.14 185);
+    glow.addColorStop(0, glowColor + '40');
+    glow.addColorStop(1, 'transparent');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, 15 * zoom, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Scan beam (dashed line to a point on the globe)
+    if (agent.status === 'scanning') {
+      const targetLat = agentLat + Math.sin(time * 0.002 + i) * 30;
+      const targetLon = agentLon + Math.cos(time * 0.0015 + i * 2) * 60;
+      const tp3 = latLonTo3D(targetLat % 90, targetLon, r);
+      const tproj = project3D(tp3.x, tp3.y, tp3.z, rotY, rotX, zoom);
+
+      if (tproj.z > -r * 0.3) {
+        ctx.beginPath();
+        ctx.setLineDash([4, 6]);
+        ctx.strokeStyle = oklch(0.75 0.16 85 / 0.2);
+        ctx.lineWidth = 1;
+        ctx.moveTo(proj.x, proj.y);
+        ctx.lineTo(tproj.x, tproj.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Scan wave at target
+        const wavePhase = (time * 0.003 + i * 1.5) % (Math.PI * 2);
+        const waveAlpha = Math.max(0, Math.sin(wavePhase)) * 0.3;
+        ctx.beginPath();
+        ctx.arc(tproj.x, tproj.y, wavePhase * 5 * zoom, 0, Math.PI * 2);
+        ctx.strokeStyle = oklch(0.75 0.16 85 / ${waveAlpha.toFixed(2)});
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
+
+    // Agent label
+    ctx.font = '8px JetBrains Mono';
+    ctx.fillStyle = oklch(0.72 0.14 185 / 0.5);
+    ctx.textAlign = 'center';
+    ctx.fillText(agent.id, proj.x, proj.y - 10 * zoom);
+  }
+}
+
+function drawGlobeScanLine(rotY, rotX, zoom) {
+  const r = globeRadius * zoom;
+
+  // Subtle rotating scan line
+  const scanAngle = (state.time * 0.0003) % (Math.PI * 2);
+  const scanX = r * Math.sin(scanAngle);
+  const scanZ = r * Math.cos(scanAngle);
+
+  const p1 = project3D(scanX, 0, scanZ, rotY, rotX, zoom);
+  const p2 = project3D(-scanX, 0, -scanZ, rotY, rotX, zoom);
+
+  if (p1.z > -r * 0.3 && p2.z > -r * 0.3) {
+    ctx.beginPath();
+    ctx.strokeStyle = oklch(0.72 0.14 185 / 0.06);
+    ctx.lineWidth = 2;
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
+  }
+}
+
+// --- Main Render Loop ---
+function render() {
+  if (!state.running) return;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Smooth zoom transition
+  state.zoom += (state.targetZoom - state.zoom) * 0.1;
+
+  // Smooth rotation
+  state.drag.rotY += (state.drag.targetRotY - state.drag.rotY) * 0.1;
+  state.drag.rotX += (state.drag.targetRotX - state.drag.rotX) * 0.1;
+
+  const rotY = state.drag.rotY;
+  const rotX = state.drag.rotX;
+
+  // Background grid
+  drawGridBackground();
+
+  // Globe
+  drawGlobeBase(rotY, rotX, state.zoom);
+  drawSeismicEvents(rotY, rotX, state.zoom);
+  drawSatellites(rotY, rotX, state.zoom);
+  drawJets(rotY, rotX, state.zoom);
+  drawAgentNetwork(rotY, rotX, state.zoom);
+  drawGlobeScanLine(rotY, rotX, state.zoom);
+
+  // Clock
+  const now = new Date();
+  document.getElementById('clock').textContent = now.toISOString().substr(11, 8) + ' UTC';
+
+  // Feed timer (add items periodically)
+  if (state.time % 60 === 0) addFeedItem();
+
+  // Update jet positions
+  for (const jet of jets) {
+    jet.route.progress += jet.speed;
+    if (jet.route.progress > 1) {
+      // Random new destination
+      const to = {
+        lat: (Math.random() - 0.5) * 140,
+        lon: (Math.random() - 0.5) * 320
+      };
+      jet.route = { from: jet.route.to, to: to, progress: 0 };
+    }
+  }
+
+  state.time++;
+  requestAnimationFrame(render);
+}
+
+// --- Interaction ---
+canvas.addEventListener('mousedown', (e) => {
+  state.drag.active = true;
+  state.drag.x = e.clientX;
+  state.drag.y = e.clientY;
+  state.drag.targetRotY = state.drag.rotY;
+  state.drag.targetRotX = state.drag.rotX;
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  if (!state.drag.active) return;
+  const dx = e.clientX - state.drag.x;
+  const dy = e.clientY - state.drag.y;
+  state.drag.targetRotY += dx * 0.005;
+  state.drag.targetRotX += dy * 0.003;
+  state.drag.x = e.clientX;
+  state.drag.y = e.clientY;
+});
+
+canvas.addEventListener('mouseup', () => { state.drag.active = false; });
+canvas.addEventListener('mouseleave', () => { state.drag.active = false; });
+
+// Touch support
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  state.drag.active = true;
+  state.drag.x = e.touches[0].clientX;
+  state.drag.y = e.touches[0].clientY;
+  state.drag.targetRotY = state.drag.rotY;
+  state.drag.targetRotX = state.drag.rotX;
+});
+
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  if (!state.drag.active) return;
+  const dx = e.touches[0].clientX - state.drag.x;
+  const dy = e.touches[0].clientY - state.drag.y;
+  state.drag.targetRotY += dx * 0.005;
+  state.drag.targetRotX += dy * 0.003;
+  state.drag.x = e.touches[0].clientX;
+  state.drag.y = e.touches[0].clientY;
+});
+
+canvas.addEventListener('touchend', () => { state.drag.active = false; });
+
+// Zoom with scroll
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  state.targetZoom *= e.deltaY > 0 ? 0.95 : 1.05;
+  state.targetZoom = Math.max(0.5, Math.min(2.0, state.targetZoom));
+}, { passive: false });
+
+// Layer controls
+document.querySelectorAll('.ctrl-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.ctrl-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.activeLayer = btn.dataset.layer;
+  });
+});
+
+// Panel tabs
+document.querySelectorAll('.panel-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-feed').style.display = tab.dataset.tab === 'feed' ? 'block' : 'none';
+    document.getElementById('panel-agents').style.display = tab.dataset.tab === 'agents' ? 'block' : 'none';
+  });
+});
+
+// Start button
+document.getElementById('start-btn').addEventListener('click', () => {
+  document.getElementById('title-screen').classList.add('hidden');
+  state.running = true;
+  state.drag.rotY = 0;
+  state.drag.rotX = 0;
+  state.drag.targetRotY = 0;
+  state.drag.targetRotX = 0;
+
+  // Initial feed items
+  for (let i = 0; i < 10; i++) addFeedItem();
+  renderAgents();
+
+  render();
+});
+
+// Auto-rotate when not dragging
+setInterval(() => {
+  if (!state.drag.active && state.running) {
+    state.drag.targetRotY += 0.0003;
+  }
+}, 16);
+
+</script>
+</body>
+</html>
